@@ -1,11 +1,10 @@
 #include "fdg.h"
 
-const float min_force = 0.0f;
 const int max_iterations = 100;
 const float attraction = 750.0f;//attraction force multiplier, between 0 and much
 const float repulsion = 1000.0f;//repulsion force multiplier, between 0 and much
 const int length = 200; //spring length in units aka the distance an edge should be long
-float cooldown = 0.98f;
+float cooldown = 0.97f;
 
 /// <summary>
 /// kind of bad practice because of side effects, but: 
@@ -20,35 +19,41 @@ float cooldown = 0.98f;
 extern void __stdcall do_graph_physics(int32_t* x, int32_t* y, int32_t* mass, int32_t count, int32_t* node_1, int32_t* node_2, int32_t node_connection_count) {
 	//we need some nodes or else things break
 	if (node_connection_count > 0) {
-		float current_max_force = min_force + 0.1f;
 
 		//copy node ids in an array so we can apply force and not disturb the rest
 		//save all forces here
-		float* x_node_forces = static_cast<float*>(calloc(count, sizeof(float)));
-		float* y_node_forces = static_cast<float*>(calloc(count, sizeof(float)));
+		float* x_node_forces = static_cast<float*>(calloc(2 * static_cast<size_t>(count), sizeof(float)));
+		float* y_node_forces = x_node_forces + count;
 
-		//times to perform calculation, result gets better over time
-		int iteration = 0;
-		while (iteration < max_iterations && current_max_force > min_force) {
-			//calculate new, smaller cooldown so the nodes will move less and less
-			cooldown *= cooldown;
+		//check for null 
+		if (x_node_forces) {
 
-			for (int current = 0; current < count; current++) {
-				for (int other = 0; other < count; other++) {
-					//difference as a vector
-					int x_diff = x[other] - x[current];
-					int y_diff = y[other] - y[current];
-					//if not the same node and not same position
-					if (current != other && x_diff && y_diff) {
-						//absolute length of difference/distance (sqrt of distance)
-						float distance = sqrtf(powf(static_cast<float>(x_diff), 2) + powf(static_cast<float>(y_diff), 2));
-						//add force like this: f_rep = c_rep / (distance^2) * vec(p_u->p_v)
-						//Vector2 repulsionForce = repulsion / (distance * distance) * (difference / distance) / node.Mass;
-						float x_rep = repulsion / powf(distance, 2) * (x_diff / distance) / mass[current];
-						float y_rep = repulsion / powf(distance, 2) * (y_diff / distance) / mass[current];
-						//go through all edges
+			//preallocate all variables so we dont have to create new ones all the time
+			int edge = 0;
+			float rep = 0, distance = 0, x_rep = 0, y_rep = 0, x_diff = 0, y_diff = 0;
 
-						for (int edge = 0; edge < node_connection_count; edge++) {
+			//times to perform calculation, result gets better over time
+			int iteration = 0;
+			while (iteration < max_iterations) {
+				//calculate new, smaller cooldown so the nodes will move less and less
+				cooldown *= cooldown;
+
+				for (int current = 0; current < count; current++) {
+					for (int other = 0; other < count; other++) {
+						//difference as a vector
+						x_diff = x[other] - x[current];
+						y_diff = y[other] - y[current];
+						//if not the same node and not same position
+						if (current != other && x_diff && y_diff) {
+							//absolute length of difference/distance (sqrt of distance)
+							distance = sqrtf(powf(x_diff, 2) + powf(y_diff, 2));
+
+							//add force like this: f_rep = c_rep / (distance^2) * vec(p_u->p_v)
+							//Vector2 repulsionForce = repulsion / (distance * distance) * (difference / distance) / node.Mass;
+							x_rep = (repulsion * x_diff) / (mass[current] * powf(distance, 2) * distance);
+							y_rep = (repulsion * y_diff) / (mass[current] * powf(distance, 2) * distance);
+
+							//check next edge we have in our list
 							//if we have a connection from us to the node we are locking at right now, aka child node
 							if (node_1[edge] == current && node_2[edge] == other) {
 								//so we can now do the attraction force
@@ -56,32 +61,28 @@ extern void __stdcall do_graph_physics(int32_t* x, int32_t* y, int32_t* mass, in
 								//NodeForces[node.Guid] += (attraction * (float)Math.Log(distance / length) * (difference / distance)) - repulsionForce;
 								x_node_forces[current] += (attraction * logf(distance / length) * (x_diff / distance)) - x_rep;
 								y_node_forces[current] += (attraction * logf(distance / length) * (y_diff / distance)) - y_rep;
-								break;
+
+								//increase iterator to next edge
+								edge++;
 							}
 							else {
 								x_node_forces[current] += x_rep;
 								y_node_forces[current] += y_rep;
-								break;
 							}
 						}
-						//add new maximum force or keep it as is if ours is smaller
-						float force_diag = sqrtf((x_node_forces[current] * x_node_forces[current]) + (y_node_forces[current] * y_node_forces[current]));
-						current_max_force = current_max_force > force_diag ? current_max_force : force_diag;
 					}
 				}
-			}
 
-			//apply forces
-			for (int i = 0; i < count; i++) {
-				x[i] += static_cast<int>(cooldown * x_node_forces[i]);
-				y[i] += static_cast<int>(cooldown * y_node_forces[i]);
-			}
+				//apply forces
+				for (int i = 0; i < count; i++) {
+					x[i] += cooldown * x_node_forces[i];
+					y[i] += cooldown * y_node_forces[i];
+				}
 
-			iteration++;
+				iteration++;
+			}
+			//free our forces after use
+			free(x_node_forces);
 		}
-
-		//free our forces after use
-		free(x_node_forces);
-		free(y_node_forces);
 	}
 }
